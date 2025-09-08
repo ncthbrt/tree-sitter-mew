@@ -1,0 +1,3 @@
+struct Sum<N = I32> {
+    sum: N::t
+}

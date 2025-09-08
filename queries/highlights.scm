@@ -5,59 +5,35 @@
 
 ; variables, types, constants
 
-(identifier) @variable
-
 (param
-  (identifier) @variable.parameter)
-
-(struct_decl
-  (identifier) @type)
+  name: (identifier) @variable)
 
 (struct_member
-  name: (_) @variable.other.member
-  type: (_) @type
+  name: (_) @property
   )
 
-(named_component_expression
-  component: (_) @variable.other.member)
 
-((identifier) @type
-  (#match? @type "^[A-Z]"))
 
-((identifier) @constant
-  (#match? @constant "^[A-Z0-9_]+$"))
 
 (type_specifier
-    (template_elaborated_ident (_) (template_elaborated_ident_part (identifier)) .) @type)
+    (template_elaborated_ident (template_elaborated_ident_part (identifier) @type)) .)
 
 ; imports (MEW extension)
-(template_elaborated_ident (template_elaborated_ident_part (identifier) @type) . (_))
+(template_elaborated_ident (template_elaborated_ident_part (identifier) @module)* . (_))
 
-; (ident_path (identifier) @namespace)
+(item_import name: ((identifier) @function) (#match? @function "^[a-z]"))
+(item_import name: ((identifier) (#is? function)) rename: (item_import_rename ((identifier) @function)))
 
-(item_import (identifier) @type
-  (#match? @type "^[A-Z]"))
+(item_import name: ((identifier) @module) (#match? @type "^[A-Z][a-z_A-Z0-9]*$"))
+(item_import name: ((identifier) (#is? module)) rename: (item_import_rename ((identifier) @module)))
 
-(item_import (identifier) @constant
-  (#match? @constant "^[A-Z0-9_]+$"))
-
-; functions
-
-(function_decl
-    name: (identifier)  @function)
-
-(call_expression
-  (template_elaborated_ident (_) . (template_elaborated_ident_part (identifier))) @function)
+(item_import name: ((identifier) @constant) (#match? @constant "^[A-Z_][A-Z0-9_]*$"))
+(item_import name: ((identifier) (#is? constant)) rename: (item_import_rename ((identifier) @constant)))
 
 
-(template_elaborated_ident (template_elaborated_ident_part name: ((identifier) @namespace)) . (template_elaborated_ident_part (identifier) @type))
-(func_call_statement
-    (template_elaborated_ident (_) . (template_elaborated_ident_part) @function))
+
 
 ; templates
-
-(template_args_start) @punctuation
-(template_args_end) @punctuation
 
 ; (template_list (template_arg_expression))
 
@@ -77,13 +53,17 @@
     (template_elaborated_ident (template_elaborated_ident_part (identifier)).) @variable.builtin)
   (#eq? @attr-name "builtin"))
 
-; literals
 
-(bool_literal) @constant.builtin.boolean
-(int_literal) @constant.numeric.integer
-(hex_int_literal) @constant.numeric.integer
-(float_literal) @constant.numeric.float
 
+; import paths
+(template_elaborated_ident
+	(template_elaborated_ident_part name: ((identifier) @module))*
+      (template_elaborated_ident_part)
+)
+
+; declarations
+(struct_decl name: ((identifier) @type))
+(module_decl name: ((identifier) @module))
 
 ; keywords
 
@@ -101,13 +81,13 @@
   "continuing"
   "return"
   "discard"
-] @keyword.control
+  "with"
+] @keyword
 
-[ ; MEW import extension
+[
   "import"
   "as"
-  "with"
-] @keyword.control.import
+] @keyword
 
 [
   "module"
@@ -120,6 +100,7 @@
   "extend"
 ] @keyword
 
+
 ; expressions
 
 [
@@ -130,7 +111,27 @@
   "->" ; return
 ] @operator
 
+; functions
+
+(function_decl
+    name: (identifier)  @function)
+
+(func_call_statement
+    (template_elaborated_ident (_)* (template_elaborated_ident_part name: ((identifier) @function)). )
+    (argument_list)*
+   )
+
+(call_expression
+    (template_elaborated_ident (_)* (template_elaborated_ident_part name: ((identifier) @function)). ))
+
+
 ; punctuation
 
-[ "(" ")" "[" "]" "{" "}" ] @punctuation.bracket
+[ "(" ")" "[" "]" "{" "}"] @punctuation.bracket
+
+(.((less_than) @punctuation.bracket) (template_list) ((greater_than) @punctuation.bracket).)
+
 [ "," "." (double_colon) (single_colon) ";" ] @punctuation.delimiter
+
+((bool_literal) @boolean)
+[(int_literal) (hex_int_literal) (float_literal)] @number

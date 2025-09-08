@@ -5,8 +5,9 @@
   body: (_) @class.inside) @class.around
 
 (function_decl
-    template_parameters: ((_) @parameter.inside . ","? @parameter.around)
-  parameters: ((_) @parameter.inside . ","? @parameter.around) @parameter.around)
+    parameters: ((_) @parameter.inside . ","? @parameter.around) @parameter.around
+    (template_parameter ((_) @parameter.inside . ","? @parameter.around))*
+  )
 
 (argument_list
   ((_) @parameter.inside . ","? @parameter.around) @parameter.around)

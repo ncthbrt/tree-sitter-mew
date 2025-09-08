@@ -25,20 +25,21 @@
 /// The order of the entries in this enumerator must match the 'externals' in
 /// the grammar.js.
 enum Token {
+// $.block_comment,
+// "<=",
+// "<<",
+// "<<=",
+// ">=",
+// ">>",
+// ">>=",
+// $._error_sentinel,
   BLOCK_COMMENT,
-  DISAMBIGUATE_TEMPLATE, // A zero-length token used to scan ahead
-  TEMPLATE_ARGS_START,
-  TEMPLATE_ARGS_END,
-  LESS_THAN,          // '<'
-  LESS_THAN_EQUAL,    // '<='
-  SHIFT_LEFT,         // '<<'
-  SHIFT_LEFT_ASSIGN,  // '<<='
-  GREATER_THAN,       // '>'
-  GREATER_THAN_EQUAL, // '>='
-  SHIFT_RIGHT,        // '>>'
-  SHIFT_RIGHT_ASSIGN, // '>>='
-  SINGLE_COLON,       // :
-  DOUBLE_COLON,       // ::
+  // LESS_THAN_EQUAL,    // '<='
+  // SHIFT_LEFT,         // '<<'
+  // SHIFT_LEFT_ASSIGN,  // '<<='
+  // GREATER_THAN_EQUAL, // '>='
+  // SHIFT_RIGHT,        // '>>'
+  // SHIFT_RIGHT_ASSIGN, // '>>='
   // A sentinel value used to signal an error has occurred already.
   // https://tree-sitter.github.io/tree-sitter/creating-parsers#other-external-scanner-details
   ERROR,
@@ -48,32 +49,24 @@ static const char *tree_sitter_mew_str(enum Token tok, bool brief) {
   switch (tok) {
   case BLOCK_COMMENT:
     return "BLOCK_COMMENT";
-  case DISAMBIGUATE_TEMPLATE:
-    return "DISAMBIGUATE_TEMPLATE";
-  case TEMPLATE_ARGS_START:
-    return "TEMPLATE_ARGS_START";
-  case TEMPLATE_ARGS_END:
-    return "TEMPLATE_ARGS_END";
-  case LESS_THAN:
-    return brief ? "<" : "LESS_THAN";
-  case LESS_THAN_EQUAL:
-    return brief ? "<=" : "LESS_THAN_EQUAL";
-  case SHIFT_LEFT:
-    return brief ? "<<" : "SHIFT_LEFT";
-  case SHIFT_LEFT_ASSIGN:
-    return brief ? "<<=" : "SHIFT_LEFT_ASSIGN";
-  case GREATER_THAN:
-    return brief ? ">" : "GREATER_THAN";
-  case GREATER_THAN_EQUAL:
-    return brief ? ">=" : "GREATER_THAN_EQUAL";
-  case SHIFT_RIGHT:
-    return brief ? ">>" : "SHIFT_RIGHT";
-  case SHIFT_RIGHT_ASSIGN:
-    return brief ? ">>=" : "SHIFT_RIGHT_ASSIGN";
-  case SINGLE_COLON:
-    return brief ? ":" : "SINGLE_COLON";
-  case DOUBLE_COLON:
-    return brief ? "::" : "DOUBLE_COLON";
+  // case DISAMBIGUATE_TEMPLATE:
+  //   return "DISAMBIGUATE_TEMPLATE";
+  // case LESS_THAN:
+  //   return brief ? "<" : "LESS_THAN";
+  // case LESS_THAN_EQUAL:
+  //   return brief ? "<=" : "LESS_THAN_EQUAL";
+  // case SHIFT_LEFT:
+  //   return brief ? "<<" : "SHIFT_LEFT";
+  // case SHIFT_LEFT_ASSIGN:
+  //   return brief ? "<<=" : "SHIFT_LEFT_ASSIGN";
+  // case GREATER_THAN:
+  //   return brief ? ">" : "GREATER_THAN";
+  // case GREATER_THAN_EQUAL:
+  //   return brief ? ">=" : "GREATER_THAN_EQUAL";
+  // case SHIFT_RIGHT:
+  //   return brief ? ">>" : "SHIFT_RIGHT";
+  // case SHIFT_RIGHT_ASSIGN:
+  //   return brief ? ">>=" : "SHIFT_RIGHT_ASSIGN";
   case ERROR:
     return "ERROR";
   default:
@@ -536,7 +529,7 @@ typedef struct {
 
 /// @param index the index of the bit starting from the front
 /// @return the bit value
-static bool bitqueue_get(BitQueue *queue, size_t index) {
+static bool bitqueue_get(const BitQueue *queue, size_t index) {
   assert(index < queue->count);
   return (queue->bits >> ((index + queue->read_offset) % BITQUEUE_CAPACITY)) &
          1;
@@ -664,22 +657,6 @@ static bool lexer_match_identifier(Lexer *lexer) {
 
   return true;
 }
-/// Attempts to match the :: operator
-// Will advance the lexer by the returned number of colons
-static int lexer_count_0_1_2_colon(Lexer *lexer) {
-  CodePoint possible_colon = lexer_peek(lexer);
-  CodePoint colon_codepoint = 0x3A;
-  if (possible_colon != colon_codepoint) {
-    return 0;
-  }
-  lexer_advance(lexer);
-  CodePoint possible_next_colon = lexer_peek(lexer);
-  if (possible_next_colon != colon_codepoint) {
-    return 1;
-  }
-  lexer_advance(lexer);
-  return 2;
-}
 
 /// Attempts to match a /* block comment */
 static bool lexer_match_block_comment(Lexer *lexer) {
@@ -709,6 +686,19 @@ static void lexer_skip_blankspace(Lexer *lexer) {
   while (is_space(lexer_peek(lexer))) {
     lexer->lexer->advance(lexer->lexer, true);
   }
+}
+
+/// Attempts to match the :: operator
+// Will advance the lexer by the returned number of colons
+static int lexer_count_0_1_2_colon(Lexer *lexer) {
+  CodePoint possible_colon = lexer_peek(lexer);
+  if (!lexer_match(lexer, ':')) {
+    return 0;
+  }
+  if (!lexer_match(lexer, ':')) {
+    return 1;
+  }
+  return 2;
 }
 
 typedef struct {
@@ -780,192 +770,6 @@ static void stack_entry_array_free(StackEntryArray *array) {
   array->capacity = 0;
 }
 
-/// Updates #state with the disambiguated '<' and '>' tokens.
-/// The following assumptions are made on entry:
-/// * lexer has just advanced to the end of an identifier
-/// On exit, all '<' and '>' template tokens will be paired up to the closing
-/// '>' for the first '<'.
-static void classify_template_args(Scanner *scanner, Lexer *lexer) {
-  LOG("classify_template_args()");
-
-  if (!lexer_match(lexer, '<')) {
-    LOG("  missing '<'");
-    return;
-  }
-
-  // The current expression nesting depth.
-  size_t expr_depth = 0;
-
-  // A stack of '<' tokens. Each is a candidate for the start of a template
-  // list. Used to pair '<' and '>' tokens at the same expression depth.
-  StackEntryArray lt_stack;
-  stack_entry_array_init(&lt_stack);
-
-  LOG("classify_template_args() '<' (initial)");
-  StackEntry entry = {bitqueue_count(&scanner->state.lt_is_tmpl), expr_depth};
-  stack_entry_array_push(&lt_stack, entry);
-  // Default to less-than (or less-than-equal, or left-shift, or
-  // left-shift-equal)
-  bitqueue_push_back(&scanner->state.lt_is_tmpl, false);
-
-  while (!stack_entry_array_empty(&lt_stack) && !lexer_match(lexer, kEOF)) {
-    lexer_skip_blankspace(lexer);
-
-    // TODO: skip line-ending comments.
-    if (lexer_match_block_comment(lexer)) {
-      continue;
-    }
-
-    // A template list can't contain an assignment or a compound assignment.
-    // There is logic below which clears the stack when reaching one of those.
-    // It looks for a '=' code point.  But we still want to allow
-    // comparison operations inside expressions. So we must pre-emptively
-    // allow operators: == >= <= !=
-
-    // Look for a nested template-list.
-    if (lexer_match_identifier(lexer)) {
-      lexer_skip_blankspace(lexer);
-      if (lexer_match(lexer, '<')) {
-        LOG("classify_template_args() '<' after ident");
-        bitqueue_push_back(&scanner->state.lt_is_tmpl, false);
-
-        if (lexer_match(lexer, '=')) {
-          // We entered the loop at "ident<=". No template arg can start with
-          // '=', so consider "<=" to be a single token. Litmus test: "alias z
-          // = a<b<=c>;"
-        } else if (lexer_match(lexer, '<')) {
-          // We entered the loop at "ident<<". No template arg can start with
-          // '<', so consider "<<" to be a single token. Litmus test: "alias z
-          // = a<b<<c>;"
-          bitqueue_push_back(&scanner->state.lt_is_tmpl, false);
-        } else {
-          StackEntry new_entry = {
-              bitqueue_count(&scanner->state.lt_is_tmpl) - 1, expr_depth};
-          stack_entry_array_push(&lt_stack, new_entry);
-        }
-      }
-      continue;
-    }
-
-    if (lexer_match(lexer, ':')) {
-      LOG("classify_template_args() ':'");
-      continue;
-    }
-
-    // Each '<' must be recorded in the lt_is_tmpl queue.
-    // Each '>' must be recorded in the gt_is_tmpl queue.
-
-    if (lexer_match(lexer, '<')) {
-      // Litmus test: "alias z =a<1<<c<d>()>;"
-      LOG("classify_template_args() '<'");
-      bitqueue_push_back(&scanner->state.lt_is_tmpl, false);
-      continue;
-    }
-
-    if (lexer_match(lexer, '>')) {
-      LOG("classify_template_args() '>'");
-      StackEntry *back = stack_entry_array_back(&lt_stack);
-      if (back != NULL && back->expr_depth == expr_depth) {
-        LOG("   TEMPLATE MATCH");
-        bitqueue_push_back(&scanner->state.gt_is_tmpl, true);
-        bitqueue_set(&scanner->state.lt_is_tmpl, back->index, true);
-        stack_entry_array_pop(&lt_stack);
-      } else {
-        LOG("   non-template '>'");
-        bitqueue_push_back(&scanner->state.gt_is_tmpl, false);
-        // Pre-emptvely allow >= as a comparison operator:
-        // Skip over '=', if present.
-        lexer_match(lexer, '=');
-      }
-      continue;
-    }
-
-    // Pre-emptively allow the != operator.
-    // As a side effect, allow unary negation operator !
-    if (lexer_match(lexer, '!')) {
-      lexer_match(lexer, '=');
-      continue;
-    }
-
-    CodePoint was = lexer_peek(lexer);
-    if (lexer_match(lexer, '(') || lexer_match(lexer, '[')) {
-      LOG("   %c expr_depth++", (int)was);
-      // Entering a nested expression
-      expr_depth++;
-      continue;
-    }
-
-    if (lexer_match(lexer, ')') || lexer_match(lexer, ']')) {
-      LOG("   %c expr_depth--", (int)was);
-      // Exiting a nested expression
-      // Pop the stack until we return to the current expression
-      // expr_depth
-      while (!stack_entry_array_empty(&lt_stack) &&
-             stack_entry_array_back(&lt_stack)->expr_depth == expr_depth) {
-        stack_entry_array_pop(&lt_stack);
-      }
-      if (expr_depth > 0) {
-        expr_depth--;
-      }
-      continue;
-    }
-
-    was = lexer_peek(lexer);
-    if (lexer_match(lexer, '=')) {
-      // A subtle point. The '=' we just matched might be the start of a
-      // syntactic token, or the end of a compound-assignment operator like +=
-      // In either case, it's fine to proceed with the logic below.
-
-      if (lexer_match(lexer, '=')) {
-        // Pre-emptively allow equality ==
-        continue;
-      }
-      // A template list can't contain an assignment, because an expression
-      // can't contain an assignment.
-      // This might be a regular assignment, or the tail end of a compound
-      // assignment.
-      LOG("   %c expression terminator", (int)was);
-      expr_depth = 0;
-      stack_entry_array_clear(&lt_stack);
-      continue;
-    }
-
-    was = lexer_peek(lexer);
-    if (lexer_match(lexer, ';') || lexer_match(lexer, '{') ||
-        lexer_match(lexer, ':')) {
-      LOG("   %c expression terminator", (int)was);
-      // Expression terminating tokens. No template list can
-      // hold these code points, so clear the stack and expression depth.
-      expr_depth = 0;
-      stack_entry_array_clear(&lt_stack);
-      continue;
-    }
-
-    bool short_circuit = false;
-    if (lexer_match(lexer, '&')) {
-      short_circuit = lexer_match(lexer, '&');
-    } else if (lexer_match(lexer, '|')) {
-      short_circuit = lexer_match(lexer, '|');
-    }
-    if (short_circuit) {
-      LOG("   short-circuiting expression");
-      // Treat 'a < b || c > d' as a logical binary operator of two
-      // comparison operators instead of a single template argument
-      // 'b||c'. Use parentheses around 'b||c' to parse as a
-      // template argument list.
-      while (!stack_entry_array_empty(&lt_stack) &&
-             stack_entry_array_back(&lt_stack)->expr_depth == expr_depth) {
-        stack_entry_array_pop(&lt_stack);
-      }
-      continue;
-    }
-
-    LOG("   skip: '%c'", (char)lexer_peek(lexer));
-    lexer_next(lexer);
-  }
-
-  stack_entry_array_free(&lt_stack);
-}
 
 static char *valids(const bool *const valid_symbols) {
   static char result[256];
@@ -1001,48 +805,9 @@ static bool scanner_scan(Scanner *scanner, TSLexer *ts_lexer,
     return true;
   }
 
-  if (valid_symbols[SINGLE_COLON] || valid_symbols[DOUBLE_COLON]) {
-    int count = lexer_count_0_1_2_colon(&lexer);
-    switch (count) {
-    case 1:
-      ts_lexer->result_symbol = SINGLE_COLON;
-      return true;
-    case 2:
-      ts_lexer->result_symbol = DOUBLE_COLON;
-      return true;
-    default:; // NO-OP
-      break;
-    }
-  }
-
-  if (valid_symbols[DISAMBIGUATE_TEMPLATE]) {
-    // The parser is telling us the _disambiguate_template token
-    // may appear at the current position.
-    // The next token may be the start of a template list, so
-    // scan forward and use the token-list disambiguation
-    // algorithm to mark template-list-start and template-list-end
-    // tokens.  These are recorded in the lt and gt bit queues.
-
-    // Call mark_end so that we can "advance" past codepoints without
-    // automatically including them in the resulting token.
-    ts_lexer->mark_end(ts_lexer);
-    ts_lexer->result_symbol = DISAMBIGUATE_TEMPLATE;
-
-    // TODO(dneto): should also skip comments, both line comments
-    // and block comments.
-    // https://github.com/gpuweb/gpuweb/issues/3876
-    lexer_skip_blankspace(&lexer);
-    if (lexer_peek(&lexer) == '<') {
-      if (bitqueue_empty(&scanner->state.lt_is_tmpl)) {
-        classify_template_args(scanner, &lexer);
-      }
-    }
-
-    // This has to return true so that Treesitter will save
-    // the state generated by the disambiguation scan.
-    return true;
-  }
-
+  // // TODO(dneto): should also skip comments, both line comments
+  // // and block comments.
+  // // https://github.com/gpuweb/gpuweb/issues/3876
   lexer_skip_blankspace(&lexer);
 
   // TODO(dneto): checkpoint and rewind if failed.
@@ -1053,69 +818,60 @@ static bool scanner_scan(Scanner *scanner, TSLexer *ts_lexer,
   }
 
   // TODO(dneto): Check valid array first.
-  if (lexer_match(&lexer, '<')) {
-    if (!bitqueue_empty(&scanner->state.lt_is_tmpl) &&
-        bitqueue_pop_front(&scanner->state.lt_is_tmpl)) {
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = TEMPLATE_ARGS_START;
-      return true;
-    }
-    if (lexer_match(&lexer, '=')) {
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = LESS_THAN_EQUAL;
-      return true;
-    }
-    if (lexer_match(&lexer, '<')) {
-      // Consume the '<' in the lt queue.
-      // Litmus test: "alias z = a<1<<c<d>()>;"
-      if (!bitqueue_empty(&scanner->state.lt_is_tmpl)) {
-        bitqueue_pop_front(&scanner->state.lt_is_tmpl);
-      }
-      if (lexer_match(&lexer, '=')) {
-        ts_lexer->mark_end(ts_lexer);
-        ts_lexer->result_symbol = SHIFT_LEFT_ASSIGN;
-        return true;
-      }
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = SHIFT_LEFT;
-      return true;
-    }
-    ts_lexer->mark_end(ts_lexer);
-    ts_lexer->result_symbol = LESS_THAN;
-    return true;
-  }
+  // ncthbrt: ???
+  // if (lexer_match(&lexer, '<')) {
+  //   ts_lexer->mark_end(ts_lexer);
+  //   if (lexer_match(&lexer, '=')) {
+  //       ts_lexer->result_symbol = LESS_THAN_EQUAL;
+  //       return true;
+  //   }
+  //   if (lexer_match(&lexer, '<')) {
+  //     // Consume the '<' in the lt queue.
+  //     // Litmus test: "alias z = a<1<<c<d>()>;"
+  //     if (lexer_match(&lexer, '=')) {
+  //       ts_lexer->result_symbol = SHIFT_LEFT_ASSIGN;
+  //       return true;
+  //     }
+  //     ts_lexer->mark_end(ts_lexer);
+  //     ts_lexer->result_symbol = SHIFT_LEFT;
+  //     return true;
+  //   }
+  //   // ts_lexer->result_symbol = LESS_THAN;
+  //   return false;
+  // }
 
   // TODO(dneto): check valid array first.
-  if (lexer_match(&lexer, '>')) {
-    if (!bitqueue_empty(&scanner->state.gt_is_tmpl) &&
-        bitqueue_pop_front(&scanner->state.gt_is_tmpl)) {
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = TEMPLATE_ARGS_END;
-      return true;
-    }
-    if (lexer_match(&lexer, '=')) {
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = GREATER_THAN_EQUAL;
-      return true;
-    }
-    if (lexer_match(&lexer, '>')) {
-      // Consume the '>' in the gt queue.
-      if (!bitqueue_empty(&scanner->state.gt_is_tmpl)) {
-        bitqueue_pop_front(&scanner->state.gt_is_tmpl);
-      }
-      if (lexer_match(&lexer, '=')) {
-        ts_lexer->mark_end(ts_lexer);
-        ts_lexer->result_symbol = SHIFT_RIGHT_ASSIGN;
-        return true;
-      }
-      ts_lexer->mark_end(ts_lexer);
-      ts_lexer->result_symbol = SHIFT_RIGHT;
-      return true;
-    }
-    ts_lexer->mark_end(ts_lexer);
-    ts_lexer->result_symbol = GREATER_THAN;
-    return true;
-  }
+  // if (lexer_match(&lexer, '>')) {
+  //   if (!bitqueue_empty(&scanner->state.gt_is_tmpl) &&
+  //       bitqueue_pop_front(&scanner->state.gt_is_tmpl)) {
+  //     // ts_lexer->mark_end(ts_lexer);
+  //     // ts_lexer->result_symbol = GREATER_THAN;
+  //     return false;
+  //   }
+  //   if (lexer_match(&lexer, '=')) {
+  //     ts_lexer->mark_end(ts_lexer);
+  //     ts_lexer->result_symbol = GREATER_THAN_EQUAL;
+  //     return true;
+  //   }
+  //   if (lexer_match(&lexer, '>')) {
+  //     // Consume the '>' in the gt queue.
+  //     if (!bitqueue_empty(&scanner->state.gt_is_tmpl)) {
+  //       bitqueue_pop_front(&scanner->state.gt_is_tmpl);
+  //     }
+  //     if (lexer_match(&lexer, '=')) {
+  //       ts_lexer->mark_end(ts_lexer);
+  //       ts_lexer->result_symbol = SHIFT_RIGHT_ASSIGN;
+  //       return true;
+  //     }
+  //     ts_lexer->mark_end(ts_lexer);
+  //     ts_lexer->result_symbol = SHIFT_RIGHT;
+  //     return true;
+  //   }
+    // ts_lexer->mark_end(ts_lexer);
+    // ts_lexer->result_symbol = GREATER_THAN;
+    // return true;
+    // return false;
+  // }
 
   return false; // Use regular parsing
 }

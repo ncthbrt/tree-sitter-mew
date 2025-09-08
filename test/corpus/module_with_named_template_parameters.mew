@@ -1,0 +1,54 @@
+==================
+Module With Named Template Parameters
+==================
+struct Sum<N = I32> {
+    sum: N::t
+}
+
+module SumBinaryOp<N = F32> {
+    alias A = N::t;
+}
+
+---
+
+(translation_unit
+  (global_member
+    (struct_decl
+      (identifier)
+      (template_parameters
+        (optional_template_parameter
+          (optionally_typed_ident
+            (identifier))
+          (template_elaborated_ident
+            (template_elaborated_ident_part
+              (identifier)))))
+      (struct_body
+        (struct_member
+          (identifier)
+          (type_specifier
+            (template_elaborated_ident
+              (template_elaborated_ident_part
+                (identifier))
+              (template_elaborated_ident_part
+                (identifier))))))))
+  (global_member
+    (module_decl
+      (identifier)
+      (module_with_template_parameters
+        (template_parameters
+          (optional_template_parameter
+            (optionally_typed_ident
+              (identifier))
+            (template_elaborated_ident
+              (template_elaborated_ident_part
+                (identifier)))))
+        (module_body
+          (module_member
+            (alias_decl
+              (identifier)
+              (alias_specifier
+                (template_elaborated_ident
+                  (template_elaborated_ident_part
+                    (identifier))
+                  (template_elaborated_ident_part
+                    (identifier)))))))))))
